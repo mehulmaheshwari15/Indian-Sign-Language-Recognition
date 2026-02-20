@@ -1,122 +1,203 @@
 import cv2
-import mediapipe as mp
 import numpy as np
+import tensorflow as tf
+import mediapipe as mp
+import os
+import urllib.request
 
-# Use the legacy solutions API (available in mediapipe 0.10.x via this import)
-mp_hands = mp.solutions.hands
-mp_draw  = mp.solutions.drawing_utils
-mp_styles = mp.solutions.drawing_styles
+# ── Paths ─────────────────────────────────────────────────────────────────────
+BASE_DIR        = os.path.dirname(__file__)
+LANDMARKER_PATH = os.path.join(BASE_DIR, "hand_landmarker.task")
+LANDMARK_MODEL  = os.path.join(BASE_DIR, "isl_landmarks_model.keras")
+LABELS_FILE     = os.path.join(BASE_DIR, "class_labels.txt")
+DATA_DIR        = os.path.join(BASE_DIR, "data")
 
-PADDING = 30        # pixels of padding around the bounding box
-IMG_SIZE = 224      # target size expected by the model
+IMG_SIZE = 224
+PADDING  = 30
 
-def get_bounding_box(hand_landmarks, frame_w, frame_h, padding):
-    """Calculate a padded bounding box from hand landmarks, clamped to frame bounds."""
-    x_coords = [lm.x * frame_w for lm in hand_landmarks.landmark]
-    y_coords = [lm.y * frame_h for lm in hand_landmarks.landmark]
+# ── Auto-download hand landmarker if missing ─────────────────────────────────
+if not os.path.exists(LANDMARKER_PATH):
+    print("Downloading hand_landmarker.task …")
+    url = ("https://storage.googleapis.com/mediapipe-models/"
+           "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task")
+    urllib.request.urlretrieve(url, LANDMARKER_PATH)
+    print("Downloaded ✓")
 
-    x_min = max(0, int(min(x_coords)) - padding)
-    y_min = max(0, int(min(y_coords)) - padding)
-    x_max = min(frame_w, int(max(x_coords)) + padding)
-    y_max = min(frame_h, int(max(y_coords)) + padding)
+# ── Load landmark-based model (preferred) or fallback to image model ──────────
+if os.path.exists(LANDMARK_MODEL) and os.path.exists(LABELS_FILE):
+    print(f"Loading landmark model from {LANDMARK_MODEL} …")
+    model = tf.keras.models.load_model(LANDMARK_MODEL)
+    with open(LABELS_FILE) as f:
+        CLASS_LABELS = [line.strip() for line in f if line.strip()]
+    USE_LANDMARKS = True
+    print("Landmark model loaded ✓")
+else:
+    IMAGE_MODEL = os.path.join(BASE_DIR, "isl_model.h5")
+    print(f"Landmark model not found — using image model: {IMAGE_MODEL}")
+    model = tf.keras.models.load_model(IMAGE_MODEL)
+    CLASS_LABELS = sorted([
+        d for d in os.listdir(DATA_DIR)
+        if os.path.isdir(os.path.join(DATA_DIR, d))
+    ])
+    USE_LANDMARKS = False
 
+print(f"Classes ({len(CLASS_LABELS)}): {CLASS_LABELS}")
+
+# ── MediaPipe Tasks API ───────────────────────────────────────────────────────
+BaseOptions        = mp.tasks.BaseOptions
+HandLandmarker     = mp.tasks.vision.HandLandmarker
+HandLandmarkerOpts = mp.tasks.vision.HandLandmarkerOptions
+VisionRunningMode  = mp.tasks.vision.RunningMode
+
+_landmarker_options = HandLandmarkerOpts(
+    base_options=BaseOptions(model_asset_path=LANDMARKER_PATH),
+    running_mode=VisionRunningMode.IMAGE,
+    num_hands=2,
+    min_hand_detection_confidence=0.7,
+    min_hand_presence_confidence=0.5,
+    min_tracking_confidence=0.5,
+)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _draw_landmarks(frame, landmarks_list, frame_w, frame_h):
+    connections = [
+        (0,1),(1,2),(2,3),(3,4),
+        (0,5),(5,6),(6,7),(7,8),
+        (5,9),(9,10),(10,11),(11,12),
+        (9,13),(13,14),(14,15),(15,16),
+        (13,17),(17,18),(18,19),(19,20),(0,17),
+    ]
+    pts = [(int(lm.x * frame_w), int(lm.y * frame_h)) for lm in landmarks_list]
+    for a, b in connections:
+        cv2.line(frame, pts[a], pts[b], (0, 255, 255), 2)
+    for x, y in pts:
+        cv2.circle(frame, (x, y), 4, (255, 0, 128), -1)
+
+
+def _bounding_box(landmarks_list, frame_w, frame_h):
+    xs = [int(lm.x * frame_w) for lm in landmarks_list]
+    ys = [int(lm.y * frame_h) for lm in landmarks_list]
+    x_min = max(0, min(xs) - PADDING)
+    y_min = max(0, min(ys) - PADDING)
+    x_max = min(frame_w, max(xs) + PADDING)
+    y_max = min(frame_h, max(ys) + PADDING)
     return x_min, y_min, x_max, y_max
 
-def preprocess(crop):
-    """Resize to IMG_SIZE x IMG_SIZE and normalize pixels to [0.0, 1.0].
-    Returns a float32 array of shape (IMG_SIZE, IMG_SIZE, 3),
-    ready to be expanded to (1, IMG_SIZE, IMG_SIZE, 3) for model input.
-    """
-    resized = cv2.resize(crop, (IMG_SIZE, IMG_SIZE))
+
+def preprocess_image(crop):
+    resized    = cv2.resize(crop, (IMG_SIZE, IMG_SIZE))
     normalized = resized.astype(np.float32) / 255.0
-    return normalized   # shape: (224, 224, 3)
+    return normalized
 
+
+def landmarks_to_vector(lms):
+    """Convert 21 NormalizedLandmark to a normalised (63,) float32 vector."""
+    coords = np.array([[lm.x, lm.y, lm.z] for lm in lms], dtype=np.float32)
+    coords -= coords[0]                                  # wrist to origin
+    scale   = np.max(np.abs(coords)) + 1e-6
+    coords /= scale
+    return coords.flatten()
+
+
+def _predict_hand(frame, landmarks, frame_w, frame_h):
+    """Run prediction on one detected hand. Returns (label, confidence)."""
+    if USE_LANDMARKS:
+        vec  = landmarks_to_vector(landmarks)
+        inp  = np.expand_dims(vec, axis=0)               # (1, 63)
+    else:
+        x_min, y_min, x_max, y_max = _bounding_box(landmarks, frame_w, frame_h)
+        if x_max <= x_min or y_max <= y_min:
+            return None, None
+        crop = frame[y_min:y_max, x_min:x_max]
+        if crop.size == 0:
+            return None, None
+        inp = np.expand_dims(preprocess_image(crop), axis=0)   # (1, 224, 224, 3)
+
+    preds = model.predict(inp, verbose=0)[0]
+    idx   = int(np.argmax(preds))
+    return CLASS_LABELS[idx], float(preds[idx]) * 100
+
+
+def get_prediction(frame):
+    """
+    Detect hand(s) in BGR frame, run ISL model.
+    Returns (annotated_frame, label_or_None, confidence_or_None).
+    Multi-hand: returns prediction for first hand only.
+    """
+    frame_h, frame_w = frame.shape[:2]
+    rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    with HandLandmarker.create_from_options(_landmarker_options) as detector:
+        result = detector.detect(mp_image)
+
+    label, confidence = None, None
+
+    if result.hand_landmarks:
+        for lms in result.hand_landmarks:
+            _draw_landmarks(frame, lms, frame_w, frame_h)
+            x_min, y_min, x_max, y_max = _bounding_box(lms, frame_w, frame_h)
+            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
+
+        # Predict on first hand
+        label, confidence = _predict_hand(
+            frame, result.hand_landmarks[0], frame_w, frame_h
+        )
+        if label:
+            cv2.putText(frame, f"{label} ({confidence:.1f}%)",
+                        (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 3)
+    else:
+        cv2.putText(frame, "No hand detected",
+                    (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+    return frame, label, confidence
+
+
+# ── Standalone webcam loop ────────────────────────────────────────────────────
 def main():
-    hands = mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.7
-    )
-
-    # Open webcam with DirectShow backend (fixes green screen on Windows)
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
-
-    # Discard first few frames to allow camera to warm up
-    for _ in range(10):
+    for _ in range(5):
         cap.read()
+    print("ISL Recognition started. Press 'q' to quit.")
 
-    print("Hand detection started. Press 'q' to quit.")
+    with HandLandmarker.create_from_options(_landmarker_options) as detector:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame    = cv2.flip(frame, 1)
+            frame_h, frame_w = frame.shape[:2]
+            rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result   = detector.detect(mp_image)
 
-    while True:
-        ret, frame = cap.read()
+            if result.hand_landmarks:
+                for lms in result.hand_landmarks:
+                    _draw_landmarks(frame, lms, frame_w, frame_h)
+                    x_min, y_min, x_max, y_max = _bounding_box(lms, frame_w, frame_h)
+                    cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
 
-        if not ret:
-            print("Error: Failed to capture frame.")
-            break
-
-        # Flip horizontally for a natural mirror view
-        frame = cv2.flip(frame, 1)
-        frame_h, frame_w = frame.shape[:2]
-
-        # Convert BGR -> RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(rgb_frame)
-
-        if results.multi_hand_landmarks:
-            # Process only the first detected hand for the crop window
-            first_hand = results.multi_hand_landmarks[0]
-
-            # Draw landmarks on all detected hands
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(
-                    frame,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS,
-                    mp_styles.get_default_hand_landmarks_style(),
-                    mp_styles.get_default_hand_connections_style()
+                lbl, conf = _predict_hand(
+                    frame, result.hand_landmarks[0], frame_w, frame_h
                 )
+                if lbl:
+                    cv2.putText(frame, f"{lbl} ({conf:.1f}%)",
+                                (10, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                                1.4, (0, 255, 0), 3)
+            else:
+                cv2.putText(frame, "No hand detected",
+                            (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-            # Calculate padded bounding box for first hand
-            x_min, y_min, x_max, y_max = get_bounding_box(
-                first_hand, frame_w, frame_h, PADDING
-            )
+            cv2.imshow("ISL Recognition", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
-            # Draw bounding box on main frame
-            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
-
-            # Crop and show — guard against zero-size or invalid crops
-            if x_max > x_min and y_max > y_min:
-                cropped = frame[y_min:y_max, x_min:x_max]
-                if cropped.size > 0:
-                    cv2.imshow("Cropped Hand", cropped)
-
-                    # --- Preprocessing pipeline (model-ready) ---
-                    input_tensor = preprocess(cropped)
-                    # input_tensor shape: (224, 224, 3), dtype: float32
-                    # To feed into a model later:
-                    #   batch = np.expand_dims(input_tensor, axis=0)  # (1, 224, 224, 3)
-                    #   prediction = model.predict(batch)
-
-            hand_count = len(results.multi_hand_landmarks)
-            cv2.putText(frame, f"Hands detected: {hand_count}",
-                        (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        else:
-            cv2.putText(frame, "No hand detected",
-                        (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-        cv2.imshow("Webcam - Hand Detection", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    hands.close()
     cap.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

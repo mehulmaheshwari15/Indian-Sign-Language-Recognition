@@ -2,239 +2,337 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SignSight AI — Indian Sign Language Recognition</title>
-  <meta name="description"
-    content="AI-powered Indian Sign Language interpreter. Upload a frame, use your camera, or start a live stream for real-time sign language recognition." />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Indian Sign Language Recognition</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0d0f14;
+            --surface: #161b27;
+            --card: #1e2535;
+            --accent: #6c63ff;
+            --accent2: #00d4aa;
+            --text: #e8eaf0;
+            --muted: #7a8099;
+            --radius: 16px;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Header ── */
+        header {
+            width: 100%;
+            padding: 20px 40px;
+            background: linear-gradient(135deg, var(--surface), #1a2235);
+            border-bottom: 1px solid rgba(108, 99, 255, .25);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+        }
+
+        header h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            letter-spacing: .4px;
+        }
+
+        header p {
+            font-size: .8rem;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        /* ── Main layout ── */
+        main {
+            width: 100%;
+            max-width: 1100px;
+            padding: 36px 24px;
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 28px;
+            align-items: start;
+        }
+
+        /* ── Video card ── */
+        .video-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .06);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+        }
+
+        .video-card img {
+            width: 100%;
+            display: block;
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+
+        .video-footer {
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent2);
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: .4;
+                transform: scale(.8);
+            }
+        }
+
+        .video-footer span {
+            font-size: .82rem;
+            color: var(--muted);
+        }
+
+        /* ── Side panel ── */
+        .side {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .pred-card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, .06);
+            border-radius: var(--radius);
+            padding: 28px 24px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+        }
+
+        .pred-card h3 {
+            font-size: .75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        #pred-label {
+            font-size: 5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            transition: all .3s ease;
+        }
+
+        #pred-conf {
+            margin-top: 10px;
+            font-size: .95rem;
+            color: var(--muted);
+        }
+
+        /* ── Confidence bar ── */
+        .bar-wrap {
+            margin-top: 18px;
+            background: rgba(255, 255, 255, .06);
+            border-radius: 99px;
+            height: 10px;
+            overflow: hidden;
+        }
+
+        #conf-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            border-radius: 99px;
+            transition: width .4s ease;
+        }
+
+        /* ── Classes card ── */
+        .classes-card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, .06);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+        }
+
+        .classes-card h3 {
+            font-size: .75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--muted);
+            margin-bottom: 14px;
+        }
+
+        .chip-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .chip {
+            background: rgba(108, 99, 255, .15);
+            border: 1px solid rgba(108, 99, 255, .3);
+            color: #a89cff;
+            border-radius: 8px;
+            padding: 4px 12px;
+            font-size: .8rem;
+            font-weight: 600;
+            transition: all .2s ease;
+        }
+
+        .chip.active {
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-color: transparent;
+            color: #fff;
+            transform: scale(1.1);
+            box-shadow: 0 4px 14px rgba(108, 99, 255, .5);
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 20px;
+            color: var(--muted);
+            font-size: .75rem;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+
+            #pred-label {
+                font-size: 4rem;
+            }
+        }
+    </style>
 </head>
 
 <body>
 
-  <!-- Background effects -->
-  <div class="bg-noise"></div>
-  <div class="bg-gradient-top"></div>
-  <div class="orb orb-1"></div>
-  <div class="orb orb-2"></div>
-  <div class="orb orb-3"></div>
+    <header>
+        <div class="logo">🤟</div>
+        <div>
+            <h1>Indian Sign Language Recognition</h1>
+            <p>Real-time hand sign detection powered by MediaPipe + Landmark Model</p>
+        </div>
+    </header>
 
-  <!-- Toast container -->
-  <div class="toast-container" id="toast-container"></div>
-
-  <!-- ─── Navbar ────────────────────────────────────────────────── -->
-  <nav class="navbar">
-    <div class="nav-logo">
-      <div class="nav-logo-icon">
-        <i data-lucide="hand" style="width:18px;height:18px;stroke-width:2.5"></i>
-      </div>
-      <span class="nav-logo-text">SignSight AI</span>
-      <span class="nav-badge">Beta</span>
-    </div>
-
-    <ul class="nav-links">
-      <li><a href="#">How it works</a></li>
-      <li><a href="#">Model</a></li>
-      <li><a href="#">Docs</a></li>
-      <li><a href="#">Contact</a></li>
-    </ul>
-
-    <div>
-      <button class="btn-signin"><span>Sign in</span></button>
-    </div>
-  </nav>
-
-  <!-- ─── Main ──────────────────────────────────────────────────── -->
-  <main class="main">
-
-    <!-- Hero -->
-    <section class="hero">
-      <h1>
-        Translate sign language<br />
-        into <span class="accent">
-          instant
-          <svg class="accent-underline" viewBox="0 0 100 12" preserveAspectRatio="none">
-            <path d="M0,10 Q50,-5 100,10" stroke="currentColor" stroke-width="4" fill="none" stroke-linecap="round"
-              style="color:rgba(253,186,116,0.6)" />
-          </svg>
-        </span> text &amp; voice
-      </h1>
-      <p class="subtitle">
-        Upload a frame, use your camera, or start a live stream.
-        Our AI model recognizes signs in real time.
-      </p>
-    </section>
-
-    <!-- Card -->
-    <section class="card">
-      <!-- Tabs -->
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="upload">
-          <i data-lucide="image" style="width:14px;height:14px"></i>
-          Upload photo
-        </button>
-        <button class="tab-btn" data-tab="camera">
-          <i data-lucide="camera" style="width:14px;height:14px"></i>
-          Use camera
-        </button>
-        <button class="tab-btn" data-tab="live">
-          <i data-lucide="video" style="width:14px;height:14px"></i>
-          Live detection
-        </button>
-      </div>
-
-      <!-- Upload Panel -->
-      <div class="panel active" data-panel="upload">
-        <div class="panel-beam">
-          <div class="upload-zone" id="upload-zone">
-            <img class="upload-graphic" src="{{ url_for('static', filename='img/upload-graphic.png') }}"
-              alt="Upload gesture" />
-            <p class="upload-title">Drop an image or click to browse</p>
-            <p class="upload-sub">JPG, PNG, WebP · Max 5 MB</p>
-
-            <div class="preview-container" id="preview-container">
-              <img id="preview-img" alt="Preview" />
-              <button class="clear-btn" id="clear-btn" title="Remove image">&times;</button>
+    <main>
+        <!-- Live webcam feed -->
+        <div class="video-card">
+            <img id="webcam" src="/video_feed" alt="Live webcam feed" />
+            <div class="video-footer">
+                <div class="dot"></div>
+                <span>Live feed · MediaPipe hand tracking active</span>
             </div>
-          </div>
         </div>
-        <input type="file" id="file-input" class="sr-only" accept="image/*" />
 
-        <!-- File info bar -->
-        <div class="file-info" id="file-info">
-          <div class="file-icon">
-            <i data-lucide="file-image" style="width:16px;height:16px"></i>
-          </div>
-          <div>
-            <div class="file-name" id="file-name">photo.jpg</div>
-            <div class="file-size" id="file-size">1.2 MB</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Camera Panel -->
-      <div class="panel" data-panel="camera">
-        <div class="panel-beam">
-          <div class="camera-panel">
-            <video id="camera-video" autoplay playsinline muted></video>
-            <div class="camera-placeholder" id="camera-placeholder">
-              <i data-lucide="scan" style="width:40px;height:40px;stroke-width:1"></i>
-              <span>Camera preview</span>
+        <!-- Side panel -->
+        <div class="side">
+            <!-- Prediction -->
+            <div class="pred-card">
+                <h3>Detected Sign</h3>
+                <div id="pred-label">–</div>
+                <div id="pred-conf">Waiting for hand…</div>
+                <div class="bar-wrap">
+                    <div id="conf-bar"></div>
+                </div>
             </div>
-            <div class="camera-flash" id="camera-flash"></div>
-            <div class="capture-btn-wrap">
-              <div class="capture-btn-outer">
-                <button class="capture-btn" id="capture-btn" aria-label="Capture photo"></button>
-              </div>
+
+            <!-- Class chips -->
+            <div class="classes-card">
+                <h3>Available Classes</h3>
+                <div class="chip-grid" id="chip-grid">
+                    {% for cls in classes %}
+                    <div class="chip" id="chip-{{ cls }}">{{ cls }}</div>
+                    {% endfor %}
+                </div>
             </div>
-          </div>
         </div>
-      </div>
+    </main>
 
-      <!-- Live Panel -->
-      <div class="panel" data-panel="live">
-        <div class="panel-beam">
-          <div class="live-panel">
-            <video id="live-video" autoplay playsinline muted></video>
-            <div class="live-placeholder" id="live-placeholder">
-              <i data-lucide="video" style="width:40px;height:40px;stroke-width:1"></i>
-              <span>Live stream preview</span>
-            </div>
-            <div class="scan-overlay" id="scan-overlay">
-              <div class="scan-line"></div>
-            </div>
-            <div class="live-badge" id="live-badge">
-              <span class="dot"></span> Live
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+    <footer>ISL Recognition · Hackathon Project · {{ classes | length }} classes loaded</footer>
 
-    <!-- CTA -->
-    <section class="cta-section">
-      <button class="btn-primary" id="run-btn">
-        <span id="run-btn-icon"><i data-lucide="sparkles" style="width:18px;height:18px"></i></span>
-        <span id="run-btn-text">Run detection</span>
-        <div class="shimmer"></div>
-      </button>
-      <button class="btn-sample" id="sample-btn">Try sample image</button>
-    </section>
+    <script>
+        let lastLabel = null;
 
-    <!-- Result -->
-    <section class="result-section" id="result-section">
-      <div class="result-card">
-        <div class="accent-bar"></div>
+        async function pollPrediction() {
+            try {
+                const res = await fetch("/predict");
+                const data = await res.json();
 
-        <div class="result-label-row">
-          <span class="status-dot" id="status-dot"></span>
-          Prediction
-        </div>
+                const labelEl = document.getElementById("pred-label");
+                const confEl = document.getElementById("pred-conf");
+                const bar = document.getElementById("conf-bar");
 
-        <div class="result-content">
-          <div>
-            <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
-              <span class="result-sign" id="result-sign">---</span>
-              <span class="result-confidence-badge" id="result-confidence">—</span>
-            </div>
-            <p class="result-description" id="result-description">Waiting for input…</p>
-          </div>
-        </div>
+                if (data.label) {
+                    labelEl.textContent = data.label;
+                    confEl.textContent = `Confidence: ${data.confidence != null ? data.confidence : '—'}%`;
+                    bar.style.width = `${data.confidence}%`;
 
-        <!-- Confidence bar -->
-        <div class="confidence-bar-wrap">
-          <span class="bar-label">Confidence</span>
-          <div class="confidence-bar">
-            <div class="confidence-bar-fill" id="confidence-bar-fill"></div>
-          </div>
-        </div>
+                    // Highlight active chip
+                    if (data.label !== lastLabel) {
+                        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                        const chip = document.getElementById(`chip-${data.label}`);
+                        if (chip) chip.classList.add('active');
+                        lastLabel = data.label;
+                    }
+                } else {
+                    labelEl.textContent = "–";
+                    confEl.textContent = "Waiting for hand…";
+                    bar.style.width = "0%";
+                    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                    lastLabel = null;
+                }
+            } catch (e) { /* silently ignore fetch errors */ }
+        }
 
-        <!-- Action buttons -->
-        <div class="result-actions">
-          <button class="result-action-btn" id="speak-btn" title="Speak result">
-            <i data-lucide="volume-2" style="width:14px;height:14px"></i>
-            Speak
-          </button>
-          <button class="result-action-btn" id="copy-btn" title="Copy to clipboard">
-            <i data-lucide="copy" style="width:14px;height:14px"></i>
-            Copy
-          </button>
-        </div>
-      </div>
-    </section>
+        setInterval(pollPrediction, 150);   // poll every 150 ms for snappy updates
+    </script>
 
-    <!-- History -->
-    <section class="history-section" id="history-section">
-      <div class="history-header">
-        <span class="history-title">
-          <i data-lucide="clock" style="width:14px;height:14px"></i>
-          Recent Predictions
-        </span>
-        <button class="history-clear" id="history-clear">Clear all</button>
-      </div>
-      <div class="history-list" id="history-list"></div>
-    </section>
-
-    <!-- Footer strip -->
-    <footer class="footer-strip">
-      <div class="footer-keywords">
-        <span>Real-time Inference</span>
-        <span class="sep"></span>
-        <span>Gesture Recognition</span>
-        <span class="sep"></span>
-        <span>Accessibility First</span>
-        <span class="sep"></span>
-        <span>Developer API</span>
-      </div>
-    </footer>
-  </main>
-
-  <!-- Lucide icons (CDN) -->
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-  <script>lucide.createIcons();</script>
-
-  <!-- App logic -->
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 
 </html>
