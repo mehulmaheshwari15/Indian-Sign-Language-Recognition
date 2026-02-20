@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignSight AI — Indian Sign Language Recognition</title>
+  <meta name="description"
+    content="AI-powered Indian Sign Language interpreter. Upload a frame, use your camera, or start a live stream for real-time sign language recognition." />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+
+<body>
+
+  <!-- Background effects -->
+  <div class="bg-noise"></div>
+  <div class="bg-gradient-top"></div>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- ─── Navbar ────────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-logo">
+      <div class="nav-logo-icon">
+        <i data-lucide="hand" style="width:18px;height:18px;stroke-width:2.5"></i>
+      </div>
+      <span class="nav-logo-text">SignSight AI</span>
+      <span class="nav-badge">Beta</span>
+    </div>
+
+    <ul class="nav-links">
+      <li><a href="#">How it works</a></li>
+      <li><a href="#">Model</a></li>
+      <li><a href="#">Docs</a></li>
+      <li><a href="#">Contact</a></li>
+    </ul>
+
+    <div>
+      <button class="btn-signin"><span>Sign in</span></button>
+    </div>
+  </nav>
+
+  <!-- ─── Main ──────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Hero -->
+    <section class="hero">
+      <h1>
+        Translate sign language<br />
+        into <span class="accent">
+          instant
+          <svg class="accent-underline" viewBox="0 0 100 12" preserveAspectRatio="none">
+            <path d="M0,10 Q50,-5 100,10" stroke="currentColor" stroke-width="4" fill="none" stroke-linecap="round"
+              style="color:rgba(253,186,116,0.6)" />
+          </svg>
+        </span> text &amp; voice
+      </h1>
+      <p class="subtitle">
+        Upload a frame, use your camera, or start a live stream.
+        Our AI model recognizes signs in real time.
+      </p>
+    </section>
+
+    <!-- Card -->
+    <section class="card">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="upload">
+          <i data-lucide="image" style="width:14px;height:14px"></i>
+          Upload photo
+        </button>
+        <button class="tab-btn" data-tab="camera">
+          <i data-lucide="camera" style="width:14px;height:14px"></i>
+          Use camera
+        </button>
+        <button class="tab-btn" data-tab="live">
+          <i data-lucide="video" style="width:14px;height:14px"></i>
+          Live detection
+        </button>
+      </div>
+
+      <!-- Upload Panel -->
+      <div class="panel active" data-panel="upload">
+        <div class="panel-beam">
+          <div class="upload-zone" id="upload-zone">
+            <img class="upload-graphic" src="{{ url_for('static', filename='img/upload-graphic.png') }}"
+              alt="Upload gesture" />
+            <p class="upload-title">Drop an image or click to browse</p>
+            <p class="upload-sub">JPG, PNG, WebP · Max 5 MB</p>
+
+            <div class="preview-container" id="preview-container">
+              <img id="preview-img" alt="Preview" />
+              <button class="clear-btn" id="clear-btn" title="Remove image">&times;</button>
+            </div>
+          </div>
+        </div>
+        <input type="file" id="file-input" class="sr-only" accept="image/*" />
+
+        <!-- File info bar -->
+        <div class="file-info" id="file-info">
+          <div class="file-icon">
+            <i data-lucide="file-image" style="width:16px;height:16px"></i>
+          </div>
+          <div>
+            <div class="file-name" id="file-name">photo.jpg</div>
+            <div class="file-size" id="file-size">1.2 MB</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Camera Panel -->
+      <div class="panel" data-panel="camera">
+        <div class="panel-beam">
+          <div class="camera-panel">
+            <video id="camera-video" autoplay playsinline muted></video>
+            <div class="camera-placeholder" id="camera-placeholder">
+              <i data-lucide="scan" style="width:40px;height:40px;stroke-width:1"></i>
+              <span>Camera preview</span>
+            </div>
+            <div class="camera-flash" id="camera-flash"></div>
+            <div class="capture-btn-wrap">
+              <div class="capture-btn-outer">
+                <button class="capture-btn" id="capture-btn" aria-label="Capture photo"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Panel -->
+      <div class="panel" data-panel="live">
+        <div class="panel-beam">
+          <div class="live-panel">
+            <video id="live-video" autoplay playsinline muted></video>
+            <div class="live-placeholder" id="live-placeholder">
+              <i data-lucide="video" style="width:40px;height:40px;stroke-width:1"></i>
+              <span>Live stream preview</span>
+            </div>
+            <div class="scan-overlay" id="scan-overlay">
+              <div class="scan-line"></div>
+            </div>
+            <div class="live-badge" id="live-badge">
+              <span class="dot"></span> Live
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section">
+      <button class="btn-primary" id="run-btn">
+        <span id="run-btn-icon"><i data-lucide="sparkles" style="width:18px;height:18px"></i></span>
+        <span id="run-btn-text">Run detection</span>
+        <div class="shimmer"></div>
+      </button>
+      <button class="btn-sample" id="sample-btn">Try sample image</button>
+    </section>
+
+    <!-- Result -->
+    <section class="result-section" id="result-section">
+      <div class="result-card">
+        <div class="accent-bar"></div>
+
+        <div class="result-label-row">
+          <span class="status-dot" id="status-dot"></span>
+          Prediction
+        </div>
+
+        <div class="result-content">
+          <div>
+            <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+              <span class="result-sign" id="result-sign">---</span>
+              <span class="result-confidence-badge" id="result-confidence">—</span>
+            </div>
+            <p class="result-description" id="result-description">Waiting for input…</p>
+          </div>
+        </div>
+
+        <!-- Confidence bar -->
+        <div class="confidence-bar-wrap">
+          <span class="bar-label">Confidence</span>
+          <div class="confidence-bar">
+            <div class="confidence-bar-fill" id="confidence-bar-fill"></div>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="result-actions">
+          <button class="result-action-btn" id="speak-btn" title="Speak result">
+            <i data-lucide="volume-2" style="width:14px;height:14px"></i>
+            Speak
+          </button>
+          <button class="result-action-btn" id="copy-btn" title="Copy to clipboard">
+            <i data-lucide="copy" style="width:14px;height:14px"></i>
+            Copy
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section class="history-section" id="history-section">
+      <div class="history-header">
+        <span class="history-title">
+          <i data-lucide="clock" style="width:14px;height:14px"></i>
+          Recent Predictions
+        </span>
+        <button class="history-clear" id="history-clear">Clear all</button>
+      </div>
+      <div class="history-list" id="history-list"></div>
+    </section>
+
+    <!-- Footer strip -->
+    <footer class="footer-strip">
+      <div class="footer-keywords">
+        <span>Real-time Inference</span>
+        <span class="sep"></span>
+        <span>Gesture Recognition</span>
+        <span class="sep"></span>
+        <span>Accessibility First</span>
+        <span class="sep"></span>
+        <span>Developer API</span>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Lucide icons (CDN) -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>lucide.createIcons();</script>
+
+  <!-- App logic -->
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+
+</html>

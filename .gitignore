@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Model files (large)
+*.h5
+*.hdf5
+*.pb
+*.tflite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Gemini agent files
+.gemini/
