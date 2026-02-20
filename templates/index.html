@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Indian Sign Language Recognition</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0d0f14;
+            --surface: #161b27;
+            --card: #1e2535;
+            --accent: #6c63ff;
+            --accent2: #00d4aa;
+            --text: #e8eaf0;
+            --muted: #7a8099;
+            --radius: 16px;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Header ── */
+        header {
+            width: 100%;
+            padding: 20px 40px;
+            background: linear-gradient(135deg, var(--surface), #1a2235);
+            border-bottom: 1px solid rgba(108, 99, 255, .25);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+        }
+
+        header h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            letter-spacing: .4px;
+        }
+
+        header p {
+            font-size: .8rem;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        /* ── Main layout ── */
+        main {
+            width: 100%;
+            max-width: 1100px;
+            padding: 36px 24px;
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 28px;
+            align-items: start;
+        }
+
+        /* ── Video card ── */
+        .video-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .06);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+        }
+
+        .video-card img {
+            width: 100%;
+            display: block;
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+
+        .video-footer {
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent2);
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: .4;
+                transform: scale(.8);
+            }
+        }
+
+        .video-footer span {
+            font-size: .82rem;
+            color: var(--muted);
+        }
+
+        /* ── Side panel ── */
+        .side {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .pred-card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, .06);
+            border-radius: var(--radius);
+            padding: 28px 24px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+        }
+
+        .pred-card h3 {
+            font-size: .75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        #pred-label {
+            font-size: 5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            transition: all .3s ease;
+        }
+
+        #pred-conf {
+            margin-top: 10px;
+            font-size: .95rem;
+            color: var(--muted);
+        }
+
+        /* ── Confidence bar ── */
+        .bar-wrap {
+            margin-top: 18px;
+            background: rgba(255, 255, 255, .06);
+            border-radius: 99px;
+            height: 10px;
+            overflow: hidden;
+        }
+
+        #conf-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            border-radius: 99px;
+            transition: width .4s ease;
+        }
+
+        /* ── Classes card ── */
+        .classes-card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, .06);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+        }
+
+        .classes-card h3 {
+            font-size: .75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--muted);
+            margin-bottom: 14px;
+        }
+
+        .chip-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .chip {
+            background: rgba(108, 99, 255, .15);
+            border: 1px solid rgba(108, 99, 255, .3);
+            color: #a89cff;
+            border-radius: 8px;
+            padding: 4px 12px;
+            font-size: .8rem;
+            font-weight: 600;
+            transition: all .2s ease;
+        }
+
+        .chip.active {
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-color: transparent;
+            color: #fff;
+            transform: scale(1.1);
+            box-shadow: 0 4px 14px rgba(108, 99, 255, .5);
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 20px;
+            color: var(--muted);
+            font-size: .75rem;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+
+            #pred-label {
+                font-size: 4rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo">🤟</div>
+        <div>
+            <h1>Indian Sign Language Recognition</h1>
+            <p>Real-time hand sign detection powered by MediaPipe + Landmark Model</p>
+        </div>
+    </header>
+
+    <main>
+        <!-- Live webcam feed -->
+        <div class="video-card">
+            <img id="webcam" src="/video_feed" alt="Live webcam feed" />
+            <div class="video-footer">
+                <div class="dot"></div>
+                <span>Live feed · MediaPipe hand tracking active</span>
+            </div>
+        </div>
+
+        <!-- Side panel -->
+        <div class="side">
+            <!-- Prediction -->
+            <div class="pred-card">
+                <h3>Detected Sign</h3>
+                <div id="pred-label">–</div>
+                <div id="pred-conf">Waiting for hand…</div>
+                <div class="bar-wrap">
+                    <div id="conf-bar"></div>
+                </div>
+            </div>
+
+            <!-- Class chips -->
+            <div class="classes-card">
+                <h3>Available Classes</h3>
+                <div class="chip-grid" id="chip-grid">
+                    {% for cls in classes %}
+                    <div class="chip" id="chip-{{ cls }}">{{ cls }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>ISL Recognition · Hackathon Project · {{ classes | length }} classes loaded</footer>
+
+    <script>
+        let lastLabel = null;
+
+        async function pollPrediction() {
+            try {
+                const res = await fetch("/predict");
+                const data = await res.json();
+
+                const labelEl = document.getElementById("pred-label");
+                const confEl = document.getElementById("pred-conf");
+                const bar = document.getElementById("conf-bar");
+
+                if (data.label) {
+                    labelEl.textContent = data.label;
+                    confEl.textContent = `Confidence: ${data.confidence != null ? data.confidence : '—'}%`;
+                    bar.style.width = `${data.confidence}%`;
+
+                    // Highlight active chip
+                    if (data.label !== lastLabel) {
+                        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                        const chip = document.getElementById(`chip-${data.label}`);
+                        if (chip) chip.classList.add('active');
+                        lastLabel = data.label;
+                    }
+                } else {
+                    labelEl.textContent = "–";
+                    confEl.textContent = "Waiting for hand…";
+                    bar.style.width = "0%";
+                    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                    lastLabel = null;
+                }
+            } catch (e) { /* silently ignore fetch errors */ }
+        }
+
+        setInterval(pollPrediction, 150);   // poll every 150 ms for snappy updates
+    </script>
+
+</body>
+
+</html>
