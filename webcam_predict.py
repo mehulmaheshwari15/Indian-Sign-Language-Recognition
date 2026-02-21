@@ -5,6 +5,8 @@ import mediapipe as mp
 import os
 import urllib.request
 
+from feature_utils import extract_features
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(__file__)
 LANDMARKER_PATH = os.path.join(BASE_DIR, "hand_landmarker.task")
@@ -53,7 +55,7 @@ _landmarker_options = HandLandmarkerOpts(
     base_options=BaseOptions(model_asset_path=LANDMARKER_PATH),
     running_mode=VisionRunningMode.IMAGE,
     num_hands=2,
-    min_hand_detection_confidence=0.7,
+    min_hand_detection_confidence=0.5,
     min_hand_presence_confidence=0.5,
     min_tracking_confidence=0.5,
 )
@@ -90,29 +92,12 @@ def preprocess_image(crop):
     return normalized
 
 
-def landmarks_to_vector(lms):
-    """Convert 21 NormalizedLandmark to a normalised (63,) float32 vector."""
-    coords = np.array([[lm.x, lm.y, lm.z] for lm in lms], dtype=np.float32)
-    coords -= coords[0]                                  # wrist to origin
-    scale   = np.max(np.abs(coords)) + 1e-6
-    coords /= scale
-    return coords.flatten()
-
-
-def _predict_hand(frame, landmarks, frame_w, frame_h):
-    """Run prediction on one detected hand. Returns (label, confidence)."""
-    if USE_LANDMARKS:
-        vec  = landmarks_to_vector(landmarks)
-        inp  = np.expand_dims(vec, axis=0)               # (1, 63)
-    else:
-        x_min, y_min, x_max, y_max = _bounding_box(landmarks, frame_w, frame_h)
-        if x_max <= x_min or y_max <= y_min:
-            return None, None
-        crop = frame[y_min:y_max, x_min:x_max]
-        if crop.size == 0:
-            return None, None
-        inp = np.expand_dims(preprocess_image(crop), axis=0)   # (1, 224, 224, 3)
-
+def _predict_from_result(result):
+    """Run ISL prediction from a HandLandmarker result. Returns (label, confidence)."""
+    vec = extract_features(result)   # 195-float rich feature vector
+    if vec is None:
+        return None, None
+    inp   = np.expand_dims(vec, axis=0)   # (1, 195)
     preds = model.predict(inp, verbose=0)[0]
     idx   = int(np.argmax(preds))
     return CLASS_LABELS[idx], float(preds[idx]) * 100
@@ -122,7 +107,6 @@ def get_prediction(frame):
     """
     Detect hand(s) in BGR frame, run ISL model.
     Returns (annotated_frame, label_or_None, confidence_or_None).
-    Multi-hand: returns prediction for first hand only.
     """
     frame_h, frame_w = frame.shape[:2]
     rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -139,10 +123,7 @@ def get_prediction(frame):
             x_min, y_min, x_max, y_max = _bounding_box(lms, frame_w, frame_h)
             cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
 
-        # Predict on first hand
-        label, confidence = _predict_hand(
-            frame, result.hand_landmarks[0], frame_w, frame_h
-        )
+        label, confidence = _predict_from_result(result)
         if label:
             cv2.putText(frame, f"{label} ({confidence:.1f}%)",
                         (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 3)
@@ -180,9 +161,7 @@ def main():
                     x_min, y_min, x_max, y_max = _bounding_box(lms, frame_w, frame_h)
                     cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
 
-                lbl, conf = _predict_hand(
-                    frame, result.hand_landmarks[0], frame_w, frame_h
-                )
+                lbl, conf = _predict_from_result(result)
                 if lbl:
                     cv2.putText(frame, f"{lbl} ({conf:.1f}%)",
                                 (10, 40), cv2.FONT_HERSHEY_SIMPLEX,

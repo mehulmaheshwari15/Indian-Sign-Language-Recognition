@@ -1,30 +1,40 @@
-# Python
+# ── Data (too large for GitHub — hosted on Google Drive) ──
+data/
+
+# ── Virtual environment ──
+.venv/
+venv/
+env/
+.env
+
+# ── Python cache ──
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 *.egg-info/
 dist/
 build/
 .eggs/
 *.egg
 
-# Virtual environment
-venv/
-env/
-.env
+# ── OS files ──
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# IDE
+# ── IDE ──
 .vscode/
 .idea/
 
-# Model files (large)
+# ── Training logs ──
+*.log
+
+# ── Model files (large) ──
 *.h5
 *.hdf5
 *.pb
 *.tflite
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# Gemini agent files
+# ── Gemini agent files ──
 .gemini/

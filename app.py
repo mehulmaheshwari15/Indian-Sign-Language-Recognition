@@ -9,7 +9,7 @@ from webcam_predict import (
     model, CLASS_LABELS, preprocess_image,
     _draw_landmarks, _bounding_box,
     HandLandmarker, _landmarker_options,
-    PADDING, USE_LANDMARKS, landmarks_to_vector,
+    PADDING, _predict_from_result,
 )
 
 app = Flask(__name__)
@@ -73,29 +73,24 @@ def capture_loop():
 
                 # ── Run model every PREDICT_EVERY frames ──────────────────────
                 if frame_count % PREDICT_EVERY == 0:
-                    first_lms = result.hand_landmarks[0]
-                    if USE_LANDMARKS:
-                        vec = landmarks_to_vector(first_lms)
-                        inp = np.expand_dims(vec, axis=0)
-                    else:
-                        x1, y1, x2, y2 = _bounding_box(first_lms, fw, fh)
-                        crop = frame[y1:y2, x1:x2]
-                        inp  = np.expand_dims(preprocess_image(crop), axis=0)
+                    from feature_utils import extract_features
+                    vec = extract_features(result)
+                    if vec is not None:
+                        inp      = np.expand_dims(vec, axis=0)         # (1, 195)
+                        raw_probs = model.predict(inp, verbose=0)[0]
 
-                    raw_probs = model.predict(inp, verbose=0)[0]   # shape (N,)
+                        # EMA: blend new probs into running average
+                        smooth_probs = EMA_ALPHA * raw_probs + (1 - EMA_ALPHA) * smooth_probs
 
-                    # ── EMA: blend new probs into running average ──────────────
-                    smooth_probs = EMA_ALPHA * raw_probs + (1 - EMA_ALPHA) * smooth_probs
+                        idx  = int(np.argmax(smooth_probs))
+                        conf = float(smooth_probs[idx]) * 100
 
-                    idx  = int(np.argmax(smooth_probs))
-                    conf = float(smooth_probs[idx]) * 100
-
-                    if conf >= CONFIDENCE_THRESHOLD:
-                        last_label = CLASS_LABELS[idx]
-                        last_conf  = round(conf, 1)
-                    else:
-                        last_label = None
-                        last_conf  = None
+                        if conf >= CONFIDENCE_THRESHOLD:
+                            last_label = CLASS_LABELS[idx]
+                            last_conf  = round(conf, 1)
+                        else:
+                            last_label = None
+                            last_conf  = None
 
             # ── Always sync latest dict ───────────────────────────────────────
             latest["label"]      = last_label

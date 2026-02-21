@@ -1,17 +1,15 @@
 """
 train_landmarks.py
 ──────────────────
-Trains a lightweight classifier on MediaPipe hand-landmark coordinates
-instead of raw images.  Much more accurate for visually-similar signs
-(e.g. C vs F) because it uses exact finger positions rather than pixels.
+Full A-Z ISL landmark classifier trainer.
 
-Pipeline:
-  data/<CLASS>/<image>.jpg
-    → MediaPipe HandLandmarker → 21 landmarks (x, y, z) → 63 floats
-    → normalise relative to wrist
-    → Dense Neural Network (63 → 128 → 64 → num_classes)
-    → saved as  isl_landmarks_model.keras
-    → class list saved as  class_labels.txt
+Key improvements over v1:
+  • Uses 195-float rich feature vector (bend angles, tip distances, orientation, 2nd hand)
+  • Helps distinguish similar signs: M/N, O/D, B/O, U/V, E/S, etc.
+  • Landmark augmentation (noise + rotation + scale) → more robust
+  • Class weights → balances A-G (2500+ imgs) vs H-Z (1200 imgs)
+  • Deeper model with L2 regularisation + BatchNorm + Dropout
+  • ReduceLROnPlateau + EarlyStopping with generous patience
 """
 
 import os
@@ -19,154 +17,216 @@ import numpy as np
 import mediapipe as mp
 import cv2
 import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras import layers, models, regularizers
+from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping,
+                                        ReduceLROnPlateau)
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
+
+from feature_utils import extract_features, FEAT_SIZE
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BASE_DIR    = os.path.dirname(__file__)
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR    = os.path.join(BASE_DIR, "data")
 LANDMARKER  = os.path.join(BASE_DIR, "hand_landmarker.task")
 MODEL_SAVE  = os.path.join(BASE_DIR, "isl_landmarks_model.keras")
 LABELS_FILE = os.path.join(BASE_DIR, "class_labels.txt")
-EPOCHS      = 60
-BATCH_SIZE  = 32
 
-# ── Choose which classes to train on ─────────────────────────────────────────
-# Set to None to auto-detect ALL folders inside data/
-# Or list exactly the classes you want, e.g. ["A", "B", "C", "D"]
-TRAIN_CLASSES = None   # ← EDIT THIS LINE
+EPOCHS      = 120
+BATCH_SIZE  = 64
+L2_REG      = 5e-4
 
-# ── MediaPipe Tasks setup (IMAGE mode — synchronous) ──────────────────────────
-BaseOptions       = mp.tasks.BaseOptions
-HandLandmarker    = mp.tasks.vision.HandLandmarker
+# Augmentation settings
+AUG_NOISE   = 0.008   # Gaussian noise std on normalised coords
+AUG_ANGLE   = 15      # max random rotation degrees
+
+# ── MediaPipe Tasks ───────────────────────────────────────────────────────────
+BaseOptions        = mp.tasks.BaseOptions
+HandLandmarker     = mp.tasks.vision.HandLandmarker
 HandLandmarkerOpts = mp.tasks.vision.HandLandmarkerOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
+VisionRunningMode  = mp.tasks.vision.RunningMode
 
 options = HandLandmarkerOpts(
     base_options=BaseOptions(model_asset_path=LANDMARKER),
     running_mode=VisionRunningMode.IMAGE,
-    num_hands=1,
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5,
-    min_tracking_confidence=0.5,
+    num_hands=2,
+    min_hand_detection_confidence=0.4,
+    min_hand_presence_confidence=0.4,
+    min_tracking_confidence=0.4,
 )
 
+# ── Discover classes (normalize to uppercase) ─────────────────────────────────
+raw_dirs   = sorted([d for d in os.listdir(DATA_DIR)
+                     if os.path.isdir(os.path.join(DATA_DIR, d))])
 
-def extract_landmarks(image_path, detector):
-    """
-    Returns a flat numpy array of 63 normalised landmark values (x,y,z × 21),
-    or None if no hand is detected.
-    Landmarks are normalised so the wrist (index 0) is at the origin and
-    the hand is scaled to a unit bounding box — making the representation
-    invariant to position, scale, and (mostly) viewpoint.
-    """
-    img = cv2.imread(image_path)
-    if img is None:
-        return None
-    rgb      = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    result   = detector.detect(mp_image)
+# Map UPPERCASE_LABEL → original folder name (for os.path.join)
+class_map  = {}
+for folder in raw_dirs:
+    lbl = folder.upper()
+    if lbl not in class_map:
+        class_map[lbl] = folder
 
-    if not result.hand_landmarks:
-        return None
+class_folders = sorted(class_map.keys())
+print(f"Classes ({len(class_folders)}): {class_folders}\n")
 
-    lms = result.hand_landmarks[0]          # list of 21 NormalizedLandmark
-    coords = np.array([[lm.x, lm.y, lm.z] for lm in lms], dtype=np.float32)
-
-    # Translate so wrist is at origin
-    coords -= coords[0]
-
-    # Scale to unit bounding box
-    scale = np.max(np.abs(coords)) + 1e-6
-    coords /= scale
-
-    return coords.flatten()                 # shape (63,)
-
-
-# ── Extract landmarks from all images ────────────────────────────────────────
-if TRAIN_CLASSES is not None:
-    class_folders = sorted(TRAIN_CLASSES)
-else:
-    class_folders = sorted([
-        d for d in os.listdir(DATA_DIR)
-        if os.path.isdir(os.path.join(DATA_DIR, d))
-    ])
-print(f"Classes detected: {class_folders}\n")
-
+# ── Extract feature vectors ───────────────────────────────────────────────────
 X, y = [], []
 label_map = {cls: i for i, cls in enumerate(class_folders)}
 
 with HandLandmarker.create_from_options(options) as detector:
     for cls in class_folders:
-        folder = os.path.join(DATA_DIR, cls)
-        images = [
-            f for f in os.listdir(folder)
-            if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))
-        ]
+        folder = os.path.join(DATA_DIR, class_map[cls])
+        images = [f for f in os.listdir(folder)
+                  if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))]
         ok, skip = 0, 0
+
         for fname in images:
-            vec = extract_landmarks(os.path.join(folder, fname), detector)
+            img = cv2.imread(os.path.join(folder, fname))
+            if img is None:
+                skip += 1
+                continue
+            rgb      = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result   = detector.detect(mp_image)
+            vec      = extract_features(result)
+
             if vec is not None:
                 X.append(vec)
                 y.append(label_map[cls])
                 ok += 1
             else:
                 skip += 1
-        print(f"  {cls}: {ok} extracted, {skip} skipped (no hand detected)")
+
+        print(f"  {cls}: {ok} extracted, {skip} skipped")
 
 X = np.array(X, dtype=np.float32)
 y = np.array(y, dtype=np.int32)
+print(f"\nDataset: {len(X)} samples | {len(class_folders)} classes | {X.shape[1]} features")
 
-print(f"\nDataset: {len(X)} samples, {len(class_folders)} classes")
-
-# ── Train / Validation split ─────────────────────────────────────────────────
+# ── Train / Val split ─────────────────────────────────────────────────────────
 X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X, y, test_size=0.20, random_state=42, stratify=y
 )
 print(f"Train: {len(X_train)}  |  Val: {len(X_val)}\n")
 
+# ── Class weights ─────────────────────────────────────────────────────────────
+classes   = np.unique(y_train)
+cw_vals   = compute_class_weight("balanced", classes=classes, y=y_train)
+class_weight = {int(c): float(w) for c, w in zip(classes, cw_vals)}
+print("Class weights computed (balanced A-G vs H-Z)\n")
+
+
+# ── Augmentation helper ───────────────────────────────────────────────────────
+def augment_hand_block(block63):
+    """Apply noise + rotation + scale to a 63-float hand coord block."""
+    c = block63.reshape(21, 3).astype(np.float32)
+
+    c += np.random.normal(0, AUG_NOISE, c.shape).astype(np.float32)
+
+    angle_rad      = np.random.uniform(-AUG_ANGLE, AUG_ANGLE) * np.pi / 180
+    ca, sa         = float(np.cos(angle_rad)), float(np.sin(angle_rad))
+    R              = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float32)
+    c              = (R @ c.T).T
+
+    c             *= np.random.uniform(0.92, 1.08)
+
+    # Re-normalise
+    c -= c[0]
+    s  = np.max(np.abs(c)) + 1e-6
+    c /= s
+    return c.flatten()
+
+
+class AugSeq(tf.keras.utils.Sequence):
+    """Keras Sequence: yields augmented batches (augment=True for train)."""
+    def __init__(self, X, y, batch_size, augment=False):
+        self.X, self.y  = X.copy(), y.copy()
+        self.bs         = batch_size
+        self.augment    = augment
+
+    def __len__(self):
+        return int(np.ceil(len(self.y) / self.bs))
+
+    def __getitem__(self, idx):
+        sl  = slice(idx * self.bs, (idx + 1) * self.bs)
+        xb  = self.X[sl].copy()
+        yb  = self.y[sl]
+
+        if self.augment:
+            for i in range(len(xb)):
+                xb[i, :63]    = augment_hand_block(xb[i, :63])
+                if np.any(xb[i, 96:159] != 0):       # 2nd hand present
+                    xb[i, 96:159] = augment_hand_block(xb[i, 96:159])
+        return xb, yb
+
+    def on_epoch_end(self):
+        idx          = np.random.permutation(len(self.y))
+        self.X, self.y = self.X[idx], self.y[idx]
+
+
+train_gen = AugSeq(X_train, y_train, BATCH_SIZE, augment=True)
+val_gen   = AugSeq(X_val,   y_val,   BATCH_SIZE, augment=False)
+
 # ── Model ─────────────────────────────────────────────────────────────────────
-num_classes = len(class_folders)
+reg       = regularizers.l2(L2_REG)
+n_classes = len(class_folders)
 
 model = models.Sequential([
-    layers.Input(shape=(63,)),
-    layers.Dense(256, activation="relu"),
+    layers.Input(shape=(FEAT_SIZE,)),
+
+    layers.Dense(512, kernel_regularizer=reg),
     layers.BatchNormalization(),
-    layers.Dropout(0.4),
-    layers.Dense(128, activation="relu"),
+    layers.Activation("relu"),
+    layers.Dropout(0.40),
+
+    layers.Dense(256, kernel_regularizer=reg),
     layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(64, activation="relu"),
-    layers.Dense(num_classes, activation="softmax"),
+    layers.Activation("relu"),
+    layers.Dropout(0.35),
+
+    layers.Dense(128, kernel_regularizer=reg),
+    layers.BatchNormalization(),
+    layers.Activation("relu"),
+    layers.Dropout(0.30),
+
+    layers.Dense(64, kernel_regularizer=reg),
+    layers.BatchNormalization(),
+    layers.Activation("relu"),
+    layers.Dropout(0.20),
+
+    layers.Dense(n_classes, activation="softmax"),
 ])
 
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(1e-3),
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
     loss="sparse_categorical_crossentropy",
     metrics=["accuracy"],
 )
 model.summary()
 
-# ── Train ─────────────────────────────────────────────────────────────────────
+# ── Callbacks ─────────────────────────────────────────────────────────────────
 callbacks = [
     ModelCheckpoint(MODEL_SAVE, monitor="val_accuracy",
                     save_best_only=True, verbose=1),
-    EarlyStopping(monitor="val_accuracy", patience=10,
+    EarlyStopping(monitor="val_accuracy", patience=20,
                   restore_best_weights=True, verbose=1),
+    ReduceLROnPlateau(monitor="val_loss", factor=0.3, patience=8,
+                      min_lr=1e-6, verbose=1),
 ]
 
+# ── Train ─────────────────────────────────────────────────────────────────────
+print("\n── Training ─────────────────────────────────────────────────────────")
 model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
+    train_gen,
+    validation_data=val_gen,
     epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
     callbacks=callbacks,
+    class_weight=class_weight,
 )
 
-# ── Save class labels ─────────────────────────────────────────────────────────
+# ── Save labels ───────────────────────────────────────────────────────────────
 with open(LABELS_FILE, "w") as f:
     f.write("\n".join(class_folders))
 
-print(f"\nModel saved  → {MODEL_SAVE}")
-print(f"Labels saved → {LABELS_FILE}")
+print(f"\n✅ Model saved  → {MODEL_SAVE}")
+print(f"✅ Labels saved → {LABELS_FILE}")
